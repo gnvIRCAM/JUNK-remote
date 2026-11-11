@@ -1,0 +1,6 @@
+.connect, .control { display: flex; flex-direction: column; gap: 1.5rem; padding: 2rem; align-items: center; }
+.top { display: flex; align-items: center; gap: 1rem; }
+.grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.5rem; }
+.knob { display: flex; flex-direction: column; align-items: center; gap: .25rem; }
+.dial { width: 64px; height: 64px; border-radius: 50%; background: #444; touch-action: none; cursor: ns-resize; position: relative; }
+.dial::after { content: ''; position: absolute; top: 6px; left: 50%; width: 4px; height: 16px; margin-left: -2px; background: #fff; border-radius: 2px; }
