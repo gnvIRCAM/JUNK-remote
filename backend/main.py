@@ -3,14 +3,16 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.web_server import WebServer
+from src.server import Server
 from src.types import KnobKind
 
 assert os.environ.get("PATCHES_PATH", None) is not None, "PATCHES_PATH environment variable is not set"
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-server = WebServer() 
+
+# HTTP + OSC server
+server = Server() 
 
 @app.get("/")
 def root():
@@ -41,4 +43,7 @@ def state():
         "knobs": server.knob_values,       # 8 floats, 0..1
         "layer": str(server.knobs.active_layer) # A or B
         }
-    
+
+@app.on_event("shutdown")
+def shutdown():
+    server.close_patch()

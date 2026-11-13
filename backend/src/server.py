@@ -1,13 +1,19 @@
 
 import math
 import os 
+from pythonosc import udp_client
+import time
 import typing as tp
+import subprocess
 import sys
 
 from .types import AppPages
 from .data import Knobs
 
 NUM_PRESETS = 16
+SCRIPTS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts")
+PD_STARTUP_DELAY = 0.5  # seconds to let pd open its OSC port before sending values
+
 
 def _get_num_files(dir: str) -> int:
     """
@@ -18,14 +24,20 @@ def _get_num_files(dir: str) -> int:
     except FileNotFoundError:
         return 0
 
-class WebServer:
+class Server:
     def __init__(self):
         self.menu_index: int = 0 # Currently selected patch
         self.preset_index: int = 0 # If a patch is loaded : currently selected preset (-1 = back to main menu)
         self.num_presets = NUM_PRESETS
         self.patches_path = os.environ["PATCHES_PATH"]
         self.page: AppPages = "menu" # "menu" or "patch"
-        self.knobs: Knobs = Knobs()
+        self.osc_client = udp_client.SimpleUDPClient(
+                    "127.0.0.1", 
+                    5005, 
+                    timeout=10
+                    )
+        self.knobs: Knobs = Knobs(self.osc_client)
+        self.pd_process: tp.Optional[subprocess.Popen] = None
 
 
     def get(self, page: AppPages) -> tp.Tuple[int, str]:
@@ -34,7 +46,9 @@ class WebServer:
         Returns both the index and a string description
         """
         if page == "menu":
-            _patches = os.listdir(self.patches_path)    
+            _patches = sorted(
+                d for d in os.listdir(self.patches_path) if os.path.isdir(os.path.join(self.patches_path, d))
+                )    
             if not len(_patches): 
                 return self.menu_index, "No patches found"
             patch_name = _patches[self.menu_index].split('/')[-1]
@@ -60,7 +74,7 @@ class WebServer:
         """
         return [float(x) for x in self.knobs.display(self.page).values()]
     
-    
+    @property
     def num_patches(self) -> int:
         """
         Returns the number of patches in the patches folder.
@@ -73,11 +87,13 @@ class WebServer:
         Switches the page between "menu" and "patch".
         """
         self.knobs.reset()
-        if self.page == "menu":
+        if self.page == "menu": # Loading a patch 
             self.page = "patch"
+            self.load_patch()
         else:
-            self.preset_index = 0
+            self.preset_index = 0 # Going back to the menu
             self.page = "menu"
+            self.close_patch()
         
         
     def display(self) -> tp.Dict[str, tp.Any]:
@@ -124,7 +140,6 @@ class WebServer:
                 self.knobs.switch_layer() # Note : could also be used in the menu to switch between patches categories (transfer, autonomous)
 
             case 3:
-                print("Randomizing")
                 self.knobs.randomize()
             
         return self.display()
@@ -144,9 +159,63 @@ class WebServer:
         """
         match self.page:
             case "menu":
-                self.menu_index = math.ceil(value * (self.num_patches()-1)) # 0...NUM_PATCHES-1
+                self.menu_index = math.ceil(value * (self.num_patches-1)) # 0...NUM_PATCHES-1
             case "patch":
                 _preset_index = math.ceil(value * (self.num_presets)) # 0...NUM_PRESETS
                 self.preset_index = _preset_index - 1
         return self.display()
     
+    
+    def load_patch(self) -> None:
+        """
+        Launches the currently selected patch in Pure Data (via scripts/load_patch.sh),
+        then loads its first preset.
+        """
+        self.close_patch()  # never run two patches at once
+
+        patch_dir = os.path.join(self.patches_path, self.patch_name)
+        if not os.path.isdir(patch_dir):
+            print(f"[server] patch folder not found: {patch_dir}", file=sys.stderr)
+            self.page = "menu"
+            return
+
+        self.pd_process = subprocess.Popen(
+            ["bash", os.path.join(SCRIPTS_PATH, "load_patch.sh"), patch_dir],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+
+        time.sleep(PD_STARTUP_DELAY)
+        if self.pd_process.poll() is not None:  # script/pd exited immediately
+            err = self.pd_process.stderr.read().decode() if self.pd_process.stderr else ""
+            print(f"[server] failed to load patch '{self.patch_name}': {err}", file=sys.stderr)
+            self.pd_process = None
+            self.page = "menu"
+            return
+
+        self.preset_index = 0
+
+    def close_patch(self) -> None:
+        """
+        Stops the running Pure Data process (via scripts/close_patch.sh).
+        """
+        if self.pd_process is None:
+            return
+        if self.pd_process.poll() is None:
+            subprocess.run(
+                ["bash", os.path.join(SCRIPTS_PATH, "close_patch.sh"), str(self.pd_process.pid)],
+                check=False,
+            )
+        try:
+            self.pd_process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self.pd_process.kill()
+        self.pd_process = None
+
+
+    
+    
+    
+    
+# client.send_message("/filter", random.random())
+# time.sleep(1)

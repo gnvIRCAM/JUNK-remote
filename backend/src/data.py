@@ -9,12 +9,13 @@ class Knobs:
     """
     A data model for the knobs.
     """
-    def __init__(self):
+    def __init__(self, osc_client):
         self.values = {
             "A": {str(i): 0.0 for i in range(8)}, 
             "B": {str(i): 0.0 for i in range(8)}
         }
         self.active_layer: tp.Literal["A", "B"] = "A"
+        self.osc_client = osc_client
     
     def switch_layer(self) -> None:
         """
@@ -27,6 +28,10 @@ class Knobs:
         Sets the value of the knob at the given index in the active layer.
         """
         self.values[self.active_layer][str(index)] = value
+        self.osc_client.send_message(
+            f"/{self.active_layer}", 
+            [float(index), value]
+            )
 
     def get(self, index: int, default: float = 0.0) -> float:
         """
@@ -43,6 +48,13 @@ class Knobs:
             "B": {str(i): 0.0 for i in range(8)}
             }
         
+        for layer in "A", "B":
+            for index in range(8):
+                self.osc_client.send_message(
+            f"/{layer}", 
+            [float(index), 0.0]
+            )
+        
     def load(self, patch, preset_index: int) -> None:
         """
         Loads the knob values from a preset file for the given patch and preset index.
@@ -57,6 +69,13 @@ class Knobs:
             return
         with open(preset_path, "r") as f:
             self.values = json.load(f)
+            
+        for layer in "A", "B":
+            for index, value in self.values[layer].items():
+                self.osc_client.send_message(
+                    f"/{layer}", 
+                    [float(index), value]
+                    )
 
     def save(self, patch: str, preset_index: int) -> None:
         """
@@ -76,6 +95,11 @@ class Knobs:
         Randomizes the knob values in the active layer.
         """
         self.values[self.active_layer] = {str(i): random.uniform(0.0, 1.0) for i in range(8)}
+        for index, value in self.values[self.active_layer].items():
+            self.osc_client.send_message(
+                f"/{self.active_layer}", 
+                [float(index), value]
+                )
             
     def display(self, page: AppPages) -> tp.Dict[int, str]:
         """
